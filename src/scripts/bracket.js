@@ -89,9 +89,15 @@ const resetAllBtn = document.getElementById("resetAllBtn");
 const exportJsonBtn = document.getElementById("exportJsonBtn");
 const exportTxtBtn = document.getElementById("exportTxtBtn");
 const exportPdfBtn = document.getElementById("exportPdfBtn");
-const importJsonInput = document.getElementById("importJsonInput");
+const verifyEspnInput = document.getElementById("verifyEspnInput");
 const importPdfInput = document.getElementById("importPdfInput");
 const round5 = document.getElementById("round5");
+const verifyModal = document.getElementById("verifyModal");
+const verifySummary = document.getElementById("verifySummary");
+const verifyDownloadBtn = document.getElementById("verifyDownloadBtn");
+const verifyCloseBtn = document.getElementById("verifyCloseBtn");
+
+let lastVerificationResult = null;
 
 function emptyClassState() {
   return {
@@ -384,38 +390,287 @@ function exportBracketPdf() {
   doc.save(`ncaabracket-${weight}lbs.pdf`);
 }
 
-function importJsonFile(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const parsed = JSON.parse(reader.result);
-      if (!parsed || typeof parsed !== "object" || !parsed.classes) {
-        throw new Error("Invalid bracket export format.");
-      }
+function roundMatchesLookup() {
+  const roundOrder = [1, 2, 3, 4, 5];
+  const roundMatches = roundOrder.reduce((acc, round) => {
+    acc[round] = MATCHES.filter((match) => match.round === round).sort((a, b) => a.id - b.id);
+    return acc;
+  }, {});
+  return { roundOrder, roundMatches };
+}
 
-      WEIGHT_CLASSES.forEach((weight) => {
-        const imported = parsed.classes[weight];
-        if (!imported) return;
-        const next = emptyClassState();
-        if (Array.isArray(imported.entrants)) {
-          next.entrants = imported.entrants.slice(0, 32).concat(Array(32).fill("")).slice(0, 32);
-        }
-        if (imported.picks && typeof imported.picks === "object") {
-          next.picks = { ...imported.picks };
-        }
-        reconcilePicks(next);
-        state.classes[weight] = next;
-      });
+function computeMatchPositions(roundMatches, topY = 70, round1Block = 30, lineOffset = 12) {
+  const positions = new Map();
+  roundMatches[1].forEach((match, idx) => {
+    const top = topY + idx * round1Block;
+    const bottom = top + lineOffset;
+    const mid = (top + bottom) / 2;
+    positions.set(match.id, { top, bottom, mid });
+  });
 
-      persist();
-      renderAll();
-    } catch (error) {
-      alert(`Import failed: ${error.message}`);
-    } finally {
-      importJsonInput.value = "";
+  for (let round = 2; round <= 5; round += 1) {
+    roundMatches[round].forEach((match) => {
+      const topMid = positions.get(match.left.id)?.mid ?? topY;
+      const bottomMid = positions.get(match.right.id)?.mid ?? topY;
+      const top = Math.min(topMid, bottomMid);
+      const bottom = Math.max(topMid, bottomMid);
+      const mid = (top + bottom) / 2;
+      positions.set(match.id, { top, bottom, mid });
+    });
+  }
+  return positions;
+}
+
+function normalizeWrestlerName(value) {
+  return (value || "")
+    .toLowerCase()
+    .replace(/\([a-z0-9]+\)/g, "")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function entrantFromSeed(rawBySeed, seed) {
+  const raw = rawBySeed[seed];
+  if (!raw) return `Seed ${seed}`;
+  return `${raw.name} (${raw.team})`;
+}
+
+function parseSeededMentions(sectionText) {
+  const mentions = [];
+  const normalized = sectionText.replace(/\s+/g, " ").trim();
+  const mentionPattern = /\((\d{1,2})\)\s+([A-Za-z][A-Za-z.'\- ]+?)\s+\(([A-Z0-9]{2,6})\)/g;
+  for (const match of normalized.matchAll(mentionPattern)) {
+    const seed = Number(match[1]);
+    if (seed < 1 || seed > 32) continue;
+    mentions.push({
+      seed,
+      name: match[2].trim().replace(/\s+/g, " "),
+      team: match[3].trim()
+    });
+  }
+  return mentions;
+}
+
+function inferExpectedPicksFromSection(sectionText) {
+  const mentions = parseSeededMentions(sectionText);
+  if (!mentions.length) return null;
+
+  const mentionCounts = {};
+  const rawBySeed = {};
+  mentions.forEach((entry) => {
+    mentionCounts[entry.seed] = (mentionCounts[entry.seed] || 0) + 1;
+    if (!rawBySeed[entry.seed] || entry.name.length > rawBySeed[entry.seed].name.length) {
+      rawBySeed[entry.seed] = { name: entry.name, team: entry.team };
     }
+  });
+
+  const expectedByMatch = {};
+  const seedWinnerByMatch = {};
+  for (const match of MATCHES) {
+    const leftSeed =
+      match.left.type === "entrant" ? match.left.index + 1 : seedWinnerByMatch[match.left.id];
+    const rightSeed =
+      match.right.type === "entrant" ? match.right.index + 1 : seedWinnerByMatch[match.right.id];
+    if (!leftSeed || !rightSeed) continue;
+
+    const leftCount = mentionCounts[leftSeed] || 0;
+    const rightCount = mentionCounts[rightSeed] || 0;
+    if (leftCount === rightCount) continue;
+
+    const winnerSeed = leftCount > rightCount ? leftSeed : rightSeed;
+    seedWinnerByMatch[match.id] = winnerSeed;
+    expectedByMatch[match.id] = entrantFromSeed(rawBySeed, winnerSeed);
+  }
+
+  return expectedByMatch;
+}
+
+function compareClassPicks(classData, expectedByMatch) {
+  const tally = { right: 0, wrong: 0, unresolved: 0 };
+  const statusByMatch = {};
+  for (const match of MATCHES) {
+    const userPick = classData.picks[match.id];
+    if (!userPick) continue;
+    const expected = expectedByMatch[match.id];
+    if (!expected) {
+      tally.unresolved += 1;
+      statusByMatch[match.id] = "unresolved";
+      continue;
+    }
+    if (normalizeWrestlerName(userPick) === normalizeWrestlerName(expected)) {
+      tally.right += 1;
+      statusByMatch[match.id] = "right";
+    } else {
+      tally.wrong += 1;
+      statusByMatch[match.id] = "wrong";
+    }
+  }
+  return { tally, statusByMatch };
+}
+
+function showVerificationModal(result) {
+  if (!verifyModal || !verifySummary) return;
+  verifySummary.textContent =
+    `Right: ${result.total.right}\n` +
+    `Wrong: ${result.total.wrong}\n` +
+    `Unresolved: ${result.total.unresolved}\n` +
+    `Weight classes compared: ${result.total.classesCompared}`;
+  verifyModal.classList.remove("hidden");
+}
+
+function hideVerificationModal() {
+  if (verifyModal) verifyModal.classList.add("hidden");
+}
+
+function exportVerificationBracketPdf() {
+  if (!lastVerificationResult) return;
+  const weights = Object.keys(lastVerificationResult.classes);
+  if (weights.length === 0) return;
+
+  const doc = new jsPDF({
+    orientation: "landscape",
+    unit: "pt",
+    format: "letter"
+  });
+  const roundX = {
+    1: 190,
+    2: 300,
+    3: 410,
+    4: 520,
+    5: 620
   };
-  reader.readAsText(file);
+  const matchLookup = new Map(MATCHES.map((match) => [match.id, match]));
+  const { roundOrder, roundMatches } = roundMatchesLookup();
+
+  weights.forEach((weight, index) => {
+    if (index > 0) {
+      doc.addPage("letter", "landscape");
+    }
+
+    const classData = getClassState(weight);
+    const resultForWeight = lastVerificationResult.classes[weight];
+    const statusByMatch = resultForWeight.statusByMatch;
+    const positions = computeMatchPositions(roundMatches);
+
+    doc.setDrawColor(0, 48, 135);
+    doc.setTextColor(15, 45, 104);
+    doc.setLineWidth(1);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text(`Verified ESPN Bracket - ${weight} lbs`, 28, 34);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(
+      `Right: ${resultForWeight.tally.right}  Wrong: ${resultForWeight.tally.wrong}  Unresolved: ${resultForWeight.tally.unresolved}`,
+      28,
+      50
+    );
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    roundOrder.forEach((round) => {
+      doc.text(ROUND_LABELS[round], roundX[round] - 80, 62);
+    });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    roundOrder.forEach((round) => {
+      const xRight = roundX[round];
+      const xLeft = xRight - 50;
+      const textX = xRight - 160;
+      const xToNext = round < 5 ? roundX[round + 1] - 50 : null;
+
+      roundMatches[round].forEach((match) => {
+        const pos = positions.get(match.id);
+        const topName = trimLabel(sourceDisplayForPdf(classData, match.left, matchLookup));
+        const bottomName = trimLabel(sourceDisplayForPdf(classData, match.right, matchLookup));
+
+        doc.setTextColor(15, 45, 104);
+        doc.text(topName, textX, pos.top - 2);
+        doc.text(bottomName, textX, pos.bottom - 2);
+
+        doc.setDrawColor(0, 48, 135);
+        doc.line(xLeft, pos.top, xRight, pos.top);
+        doc.line(xLeft, pos.bottom, xRight, pos.bottom);
+        doc.line(xRight, pos.top, xRight, pos.bottom);
+        if (xToNext !== null) doc.line(xRight, pos.mid, xToNext, pos.mid);
+
+        const status = statusByMatch[match.id];
+        if (status === "right") {
+          doc.setTextColor(16, 125, 59);
+          doc.text("OK", xRight + 6, pos.mid + 2);
+        } else if (status === "wrong") {
+          doc.setTextColor(185, 28, 28);
+          doc.text("X", xRight + 6, pos.mid + 2);
+        } else if (status === "unresolved") {
+          doc.setTextColor(194, 120, 3);
+          doc.text("?", xRight + 6, pos.mid + 2);
+        }
+      });
+    });
+
+    const champion = classData.picks[FINAL_MATCH_ID] || "Champion not selected";
+    const champX = 655;
+    const champY = positions.get(FINAL_MATCH_ID)?.mid ?? 306;
+    doc.setTextColor(15, 45, 104);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("Champion", champX, champY - 10);
+    doc.setFontSize(9);
+    doc.text(trimLabel(champion, 22), champX, champY + 6);
+    doc.rect(champX - 8, champY - 22, 124, 34);
+  });
+
+  doc.save("ncaabracket-verified-results.pdf");
+}
+
+async function verifyEspnBracketFile(file) {
+  try {
+    const pdfText = await pdfToText(file);
+    const normalized = pdfText.replace(/\r/g, "");
+    const result = {
+      total: { right: 0, wrong: 0, unresolved: 0, classesCompared: 0 },
+      classes: {}
+    };
+
+    for (const weight of WEIGHT_CLASSES) {
+      const headerRegex = new RegExp(`${weight}\\s+CHAMPIONSHIP`, "i");
+      const headerMatch = headerRegex.exec(normalized);
+      if (!headerMatch) continue;
+
+      const startIndex = headerMatch.index + headerMatch[0].length;
+      const tail = normalized.slice(startIndex);
+      const wrestlebacksIndex = tail.search(/WRESTLEBACKS/i);
+      const sectionText = wrestlebacksIndex >= 0 ? tail.slice(0, wrestlebacksIndex) : tail;
+
+      const expectedByMatch = inferExpectedPicksFromSection(sectionText);
+      if (!expectedByMatch) continue;
+
+      const classData = getClassState(weight);
+      const classResult = compareClassPicks(classData, expectedByMatch);
+      result.classes[weight] = {
+        tally: classResult.tally,
+        statusByMatch: classResult.statusByMatch
+      };
+      result.total.right += classResult.tally.right;
+      result.total.wrong += classResult.tally.wrong;
+      result.total.unresolved += classResult.tally.unresolved;
+      result.total.classesCompared += 1;
+    }
+
+    if (result.total.classesCompared === 0) {
+      alert("Could not parse ESPN bracket rounds from this PDF.");
+      return;
+    }
+
+    lastVerificationResult = result;
+    showVerificationModal(result);
+  } catch (error) {
+    alert(`ESPN verification failed: ${error.message}`);
+  } finally {
+    verifyEspnInput.value = "";
+  }
 }
 
 async function pdfToText(file) {
@@ -585,9 +840,14 @@ resetAllBtn.addEventListener("click", () => {
 exportJsonBtn.addEventListener("click", exportJson);
 exportTxtBtn.addEventListener("click", exportText);
 exportPdfBtn.addEventListener("click", exportBracketPdf);
-importJsonInput.addEventListener("change", (event) => {
+verifyEspnInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
-  if (file) importJsonFile(file);
+  if (file) await verifyEspnBracketFile(file);
+});
+verifyDownloadBtn?.addEventListener("click", exportVerificationBracketPdf);
+verifyCloseBtn?.addEventListener("click", hideVerificationModal);
+verifyModal?.addEventListener("click", (event) => {
+  if (event.target === verifyModal) hideVerificationModal();
 });
 importPdfInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];

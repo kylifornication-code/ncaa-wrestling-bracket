@@ -198,3 +198,44 @@ input[type="file"] {
     grid-template-columns: 1fr;
   }
 }
+
+.verify-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 45, 104, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 1000;
+}
+
+.verify-modal.hidden {
+  display: none;
+}
+
+.verify-card {
+  width: min(560px, 100%);
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.25);
+}
+
+.verify-card h2 {
+  margin: 0 0 0.5rem;
+}
+
+#verifySummary {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+.verify-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}

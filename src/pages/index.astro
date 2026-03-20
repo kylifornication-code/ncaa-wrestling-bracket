@@ -32,9 +32,9 @@ import "../styles/global.css";
 
         <article class="top-card">
           <h2>Import</h2>
-          <label for="importJsonInput">Import JSON</label>
-          <input id="importJsonInput" type="file" accept="application/json" />
-          <label for="importPdfInput">Upload Bracket PDF</label>
+          <label for="verifyEspnInput">Verify ESPN Bracket</label>
+          <input id="verifyEspnInput" type="file" accept="application/pdf" />
+          <label for="importPdfInput">Upload ESPN Bracket</label>
           <input id="importPdfInput" type="file" accept="application/pdf" />
         </article>
 
@@ -88,6 +88,17 @@ import "../styles/global.css";
         </div>
       </section>
     </main>
+
+    <div id="verifyModal" class="verify-modal hidden" role="dialog" aria-modal="true" aria-labelledby="verifyTitle">
+      <div class="verify-card">
+        <h2 id="verifyTitle">ESPN verification complete.</h2>
+        <pre id="verifySummary"></pre>
+        <div class="verify-actions">
+          <button id="verifyDownloadBtn" type="button">Download Verified Bracket PDF</button>
+          <button id="verifyCloseBtn" type="button">Close</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>
 
