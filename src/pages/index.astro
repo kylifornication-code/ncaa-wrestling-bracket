@@ -1,0 +1,95 @@
+---
+import "../styles/global.css";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NCAA Wrestling Bracket Builder</title>
+  </head>
+  <body>
+    <main class="container">
+      <header class="page-header">
+        <h1>NCAA Wrestling Bracket Builder</h1>
+        <p>
+          Build brackets by weight class, pick winners in each round, then export your
+          completed bracket.
+        </p>
+      </header>
+
+      <section class="top-cards">
+        <article class="top-card">
+          <h2>Weight Class</h2>
+          <label for="weightClassSelect">Choose class</label>
+          <select id="weightClassSelect"></select>
+          <div class="card-actions">
+            <button id="resetClassBtn" type="button">Reset This Weight Class</button>
+            <button id="resetAllBtn" type="button" class="danger">Reset All</button>
+          </div>
+        </article>
+
+        <article class="top-card">
+          <h2>Import</h2>
+          <label for="importJsonInput">Import JSON</label>
+          <input id="importJsonInput" type="file" accept="application/json" />
+          <label for="importPdfInput">Upload Bracket PDF</label>
+          <input id="importPdfInput" type="file" accept="application/pdf" />
+        </article>
+
+        <article class="top-card">
+          <h2>Export</h2>
+          <p class="card-help">Download your current picks to share or reload later.</p>
+          <div class="card-actions">
+            <button id="exportJsonBtn" type="button">Export JSON</button>
+            <button id="exportTxtBtn" type="button">Export Text</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="entry-section">
+        <h2>Entrants (Round of 32)</h2>
+        <p class="section-help">
+          Enter wrestler names for this weight class. Picks update dynamically from each prior
+          round.
+        </p>
+        <div id="entrantGrid" class="entrant-grid"></div>
+      </section>
+
+      <section class="bracket-section">
+        <h2>Bracket Picks</h2>
+        <div class="round-columns">
+          <div>
+            <h3>Round of 32</h3>
+            <div id="round1" class="matches"></div>
+          </div>
+          <div>
+            <h3>Round of 16</h3>
+            <div id="round2" class="matches"></div>
+          </div>
+          <div>
+            <h3>Quarterfinals</h3>
+            <div id="round3" class="matches"></div>
+          </div>
+          <div>
+            <h3>Semifinals</h3>
+            <div id="round4" class="matches"></div>
+          </div>
+          <div>
+            <h3>Final</h3>
+            <div id="round5" class="matches"></div>
+            <div class="champion-box">
+              <span>Champion</span>
+              <strong id="championOutput">—</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
+
+<script>
+  import "../scripts/bracket.js";
+</script>
