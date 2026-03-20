@@ -1,5 +1,6 @@
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import pdfWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
+import { jsPDF } from "jspdf";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -87,6 +88,7 @@ const resetClassBtn = document.getElementById("resetClassBtn");
 const resetAllBtn = document.getElementById("resetAllBtn");
 const exportJsonBtn = document.getElementById("exportJsonBtn");
 const exportTxtBtn = document.getElementById("exportTxtBtn");
+const exportPdfBtn = document.getElementById("exportPdfBtn");
 const importJsonInput = document.getElementById("importJsonInput");
 const importPdfInput = document.getElementById("importPdfInput");
 const round5 = document.getElementById("round5");
@@ -260,6 +262,126 @@ function exportText() {
   });
 
   downloadFile("ncaabracket2026-bracket.txt", lines.join("\n"), "text/plain");
+}
+
+function trimLabel(value, maxLen = 28) {
+  if (!value) return "";
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLen) return normalized;
+  return `${normalized.slice(0, maxLen - 1)}…`;
+}
+
+function sourceDisplayForPdf(classData, source, matchLookup) {
+  if (source.type === "entrant") return classData.entrants[source.index] || `Seed ${source.index + 1}`;
+  const picked = classData.picks[source.id];
+  if (picked) return picked;
+  const sourceMatch = matchLookup.get(source.id);
+  return sourceMatch ? `Winner ${sourceMatch.label}` : "Winner";
+}
+
+function exportBracketPdf() {
+  const weight = state.activeWeight;
+  const classData = getClassState(weight);
+  reconcilePicks(classData);
+
+  const doc = new jsPDF({
+    orientation: "landscape",
+    unit: "pt",
+    format: "letter"
+  });
+
+  const pageWidth = 792;
+  const pageHeight = 612;
+  const topY = 70;
+  const round1Block = 30;
+  const lineOffset = 12;
+  const roundX = {
+    1: 190,
+    2: 300,
+    3: 410,
+    4: 520,
+    5: 620
+  };
+  const roundOrder = [1, 2, 3, 4, 5];
+  const matchLookup = new Map(MATCHES.map((match) => [match.id, match]));
+  const roundMatches = roundOrder.reduce((acc, round) => {
+    acc[round] = MATCHES.filter((match) => match.round === round).sort((a, b) => a.id - b.id);
+    return acc;
+  }, {});
+
+  doc.setDrawColor(0, 48, 135);
+  doc.setTextColor(15, 45, 104);
+  doc.setLineWidth(1);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text(`NCAA Wrestling Bracket - ${weight} lbs`, 28, 34);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text(`Exported ${new Date().toLocaleString()}`, 28, 50);
+
+  // Draw round headers.
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  roundOrder.forEach((round) => {
+    doc.text(ROUND_LABELS[round], roundX[round] - 80, 62);
+  });
+
+  const positions = new Map();
+  roundMatches[1].forEach((match, idx) => {
+    const top = topY + idx * round1Block;
+    const bottom = top + lineOffset;
+    const mid = (top + bottom) / 2;
+    positions.set(match.id, { top, bottom, mid });
+  });
+
+  for (let round = 2; round <= 5; round += 1) {
+    roundMatches[round].forEach((match) => {
+      const topMid = positions.get(match.left.id)?.mid ?? topY;
+      const bottomMid = positions.get(match.right.id)?.mid ?? topY;
+      const top = Math.min(topMid, bottomMid);
+      const bottom = Math.max(topMid, bottomMid);
+      const mid = (top + bottom) / 2;
+      positions.set(match.id, { top, bottom, mid });
+    });
+  }
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  roundOrder.forEach((round) => {
+    const xRight = roundX[round];
+    const xLeft = xRight - 50;
+    const textX = xRight - 160;
+    const xToNext = round < 5 ? roundX[round + 1] - 50 : null;
+
+    roundMatches[round].forEach((match) => {
+      const pos = positions.get(match.id);
+      const topName = trimLabel(sourceDisplayForPdf(classData, match.left, matchLookup));
+      const bottomName = trimLabel(sourceDisplayForPdf(classData, match.right, matchLookup));
+
+      doc.text(topName, textX, pos.top - 2);
+      doc.text(bottomName, textX, pos.bottom - 2);
+
+      doc.line(xLeft, pos.top, xRight, pos.top);
+      doc.line(xLeft, pos.bottom, xRight, pos.bottom);
+      doc.line(xRight, pos.top, xRight, pos.bottom);
+
+      if (xToNext !== null) {
+        doc.line(xRight, pos.mid, xToNext, pos.mid);
+      }
+    });
+  });
+
+  const champion = classData.picks[FINAL_MATCH_ID] || "Champion not selected";
+  const champX = 655;
+  const champY = positions.get(FINAL_MATCH_ID)?.mid ?? pageHeight / 2;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("Champion", champX, champY - 10);
+  doc.setFontSize(9);
+  doc.text(trimLabel(champion, 22), champX, champY + 6);
+  doc.rect(champX - 8, champY - 22, 124, 34);
+
+  doc.save(`ncaabracket-${weight}lbs.pdf`);
 }
 
 function importJsonFile(file) {
@@ -462,6 +584,7 @@ resetAllBtn.addEventListener("click", () => {
 
 exportJsonBtn.addEventListener("click", exportJson);
 exportTxtBtn.addEventListener("click", exportText);
+exportPdfBtn.addEventListener("click", exportBracketPdf);
 importJsonInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   if (file) importJsonFile(file);
